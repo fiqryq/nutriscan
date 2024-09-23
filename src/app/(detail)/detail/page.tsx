@@ -1,21 +1,16 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 import { Main } from "@/components/ui/page-wrapper";
-import { AspectRatio } from "@radix-ui/react-aspect-ratio";
-import Image from "next/image";
 import { useEffect, useState } from "react";
-import { SendHorizonalIcon } from "lucide-react";
+import { SendHorizonalIcon, Terminal } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 import React from "react";
-import { assistantPropmtAnalyzeFood, ChatPrompt } from "@/propmt";
+import { ChatPrompt } from "@/propmt";
 import Groq from "groq-sdk";
-import { ChatMessage, IResponse } from "@/interface/response";
-import { SugarGrade, SugarGradeHeaderBadge } from "@/components/ui/sugar-grade";
-import {
-  HeaderSkeleton,
-  NutritionSkeleton,
-  NutritionTitleSkeleton,
-  Skeleton,
-} from "@/components/ui/skeleton";
+import { ChatMessage, I_Response } from "@/interface/response";
+import ReactMarkdown from "react-markdown";
+
 import {
   FormField,
   FormItem,
@@ -29,6 +24,7 @@ import { z } from "zod";
 import { SheetTrigger, SheetContent, Sheet } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { GROQENV } from "@/lib/env";
+import { useSearchParams } from "next/navigation";
 
 const formSchema = z.object({
   messages: z.string().min(2, {
@@ -36,19 +32,26 @@ const formSchema = z.object({
   }),
 });
 
-import { responseAPI } from "@/constant/food";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+
+import { SugarGrade } from "@/components/ui/sugar-grade";
+import { Skeleton } from "@/components/ui/skeleton";
+import Link from "next/link";
 
 export default function Detail() {
+  const searchParams = useSearchParams();
+  const barcode = searchParams.get("barcode") as string;
+
   const groq = new Groq({
     apiKey: GROQENV,
     dangerouslyAllowBrowser: true,
   });
 
-  const [content, setContent] = useState<Partial<IResponse>>({});
+  const [content, setContent] = useState<Partial<I_Response>>({});
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-
-  const [loading, setLoading] = useState<boolean>(false);
-
+  const [error, setError] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [summary, setSummary] = useState<any>("");
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -56,20 +59,75 @@ export default function Detail() {
     },
   });
 
+  const defaultMessages = [
+    "Apa alternatif camilan yang lebih sehat dari produk ini?",
+    "Produk ini mengandung berapa banyak gula, dan apa pengaruhnya terhadap tubuh?",
+    "Bagaimana produk ini memengaruhi kesehatan saya?",
+    "Berapa banyak kalori dalam produk ini, dan apakah sesuai dengan kebutuhan saya?",
+  ];
+
   useEffect(() => {
-    const getToken = async () => {
+    const handleOnScan = async () => {
       try {
-        const response = await fetch("/api/oauth", {
-          method: "POST",
-        });
-        const data = await response.json();
-        console.log(data);
-      } catch (error) {
-        console.error("Error fetching token:", error);
+        const res = await fetch(`/api/getProduct?barcode=${barcode}`);
+        const product = await res.json();
+        if (res.status === 200) {
+          const nutrition = Object.entries({
+            ingredients_text_in: product.ingredients_text_in,
+            nutriscore_data: product.nutriscore_data,
+            nutriments: product.nutriments,
+            product_name_in: product.product_name_in,
+            product_quantity: product.product_quantity,
+            quantity: product.quantity,
+          });
+
+          const content = `
+          Analyze this nutritional data: ${JSON.stringify(nutrition)}.
+          
+          1. List all ingredients. Highlight common allergens in **bold** within the ingredient name.
+          2. After the ingredients, list allergens prefixed with "Alergen:".
+          3. If sugar content is high, add a warning about the risks of consuming too much sugar.
+          4. End with a brief summary of the ingredients.
+          5. Respond in Bahasa Indonesia and use markdown format.
+          
+          Avoid adding introductory phrases like "Here is the analysis" or "Ingredients:".
+          Example response:
+          Air, Gula, **SUSU** Protein, **GANDUM** Pati.
+          **Alergen:** Susu, Gandum
+          **Peringatan:** Produk ini mengandung gula dalam jumlah tinggi.
+          **Ringkasan:** Produk ini mengandung kadar gula tinggi.
+          `;
+
+          const chatCompletion = await groq.chat.completions.create({
+            messages: [
+              {
+                role: "user",
+                content: content,
+              },
+            ],
+            model: "llama3-70b-8192",
+            max_tokens: 1000,
+            temperature: 1,
+            top_p: 1,
+            stream: false,
+            stop: null,
+          });
+          if (chatCompletion) {
+            setSummary(chatCompletion?.choices[0]?.message?.content);
+          }
+          setLoading(false);
+          setContent(product);
+        } else {
+          setError(true);
+          setLoading(false);
+        }
+      } catch (err) {
+        setError(true);
+        setLoading(false);
       }
     };
-    getToken();
-  }, []);
+    handleOnScan();
+  }, [barcode, loading, error]);
 
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
@@ -79,20 +137,34 @@ export default function Detail() {
         { role: "user", content: data.messages },
       ]);
 
+      const nutrition = Object.entries({
+        ingredients_text_in: content.ingredients_text_in,
+        nutriscore_data: content.nutriscore_data,
+        nutriments: content.nutriments,
+        product_name_in: content.product_name_in,
+        product_quantity: content.product_quantity,
+        quantity: content.quantity,
+      });
+
       const chatCompletion = await groq.chat.completions.create({
         messages: [
           {
-            role: "assistant",
-            content: ChatPrompt(),
+            role: "system",
+            content: `
+              You are a virtual nutritionist assistant. Your job is to answer user inquiries strictly based on the provided API data in Bahasa Indonesia. Do not include any introductory phrases like "Based on the API response." Respond directly to the user's question with only the relevant information or calculations derived from the API response below.
+              If the user's question is not related to nutrition, food, diet, or health, politely respond with "Saya hanya dapat membantu dengan pertanyaan terkait nutrisi." Do not attempt to answer questions that are outside the scope of nutrition.
+              ${JSON.stringify(nutrition)}
+            `,
           },
           {
             role: "user",
             content: data.messages,
           },
         ],
+
         model: "llama3-70b-8192",
         max_tokens: 1000,
-        temperature: 1,
+        temperature: 0.3,
         top_p: 1,
         stream: true,
         stop: null,
@@ -119,184 +191,157 @@ export default function Detail() {
     }
   };
 
-  const askOllama = async (): Promise<any> => {
-    setLoading(true);
+  if (loading) {
+    return (
+      <Main>
+        <Skeleton className="w-full h-[250px]" />
+        <div className="p-3">
+          <Skeleton className="w-1/2 h-6" />
+          <div className="inline-flex gap-2 mt-2">
+            <Skeleton className="w-20 h-6" />
+            <Skeleton className="w-20 h-6" />
+            <Skeleton className="w-20 h-6" />
+            <Skeleton className="w-20 h-6" />
+          </div>
+          <Skeleton className="w-full h-10" />
+        </div>
+        <hr />
+        <div className="p-3">
+          <Skeleton className="w-full h-12" />
+          <div className="inline-flex justify-between w-full gap-2 mt-2">
+            <Skeleton className="w-20 h-20" />
+            <Skeleton className="w-20 h-20" />
+            <Skeleton className="w-20 h-20" />
+            <Skeleton className="w-20 h-20" />
+            <Skeleton className="w-20 h-20" />
+          </div>
+        </div>
+        <hr />
+        <div className="p-3">
+          <Skeleton className="w-full h-12" />
+          <div className="inline-flex justify-between w-full gap-2 mt-2">
+            <Skeleton className="w-full h-32" />
+          </div>
+        </div>
+        <Skeleton className="w-full h-24 absolute bottom-0 inset-x-0 mx-auto" />
+      </Main>
+    );
+  }
 
-    try {
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: "assistant",
-            content: assistantPropmtAnalyzeFood(),
-          },
-          {
-            role: "user",
-            content: JSON.stringify(responseAPI),
-          },
-        ],
-        model: "llama3-70b-8192",
-        max_tokens: 4000,
-        temperature: 1,
-        top_p: 1,
-        stream: false,
-        stop: null,
-      });
-
-      // Check if choices array and message content exist
-      const content = chatCompletion?.choices?.[0]?.message?.content || "";
-
-      // Attempt to parse content
-      let parsedContent;
-      try {
-        parsedContent = JSON.parse(content);
-      } catch (parseError) {
-        console.warn("Failed to parse JSON content:", parseError);
-        parsedContent = null;
-      }
-
-      // Update content if parsed successfully
-      if (parsedContent) {
-        setContent(parsedContent);
-      } else {
-        console.warn("No valid content to display.");
-      }
-    } catch (error) {
-      console.error("Error fetching chat completion:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    askOllama();
-  }, []);
+  if (error) {
+    return (
+      <div className="h-svh w-full bg-white flex flex-col items-center justify-center">
+        <img src="/assets/404.png" alt="404" />
+        <Link href="/" className="mt-3 bg-black text-white p-3 rounded-lg">
+          Scan another product
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <Main>
-      {loading ? (
-        <HeaderSkeleton />
-      ) : (
-        <div className="w-full relative mb-6">
-          <AspectRatio ratio={1 / 1}>
-            <Image
-              src={content?.image ?? ""}
-              alt="Image"
-              width={480}
-              height={200}
-              className="object-cover"
-            />
-            <div className="flex flex-col items-center justify-center absolute right-5 bottom-0">
-              {/* <div className="font-bold text-3xl">{content.sugar?.grade}</div> */}
-              {SugarGradeHeaderBadge(content.sugar?.grade ?? "A")}
-            </div>
-          </AspectRatio>
-        </div>
-      )}
-      {loading ? (
-        <div className="p-3">
-          <Skeleton className="w-1/2 h-5 mt-3 px-3" />
-          <Skeleton className="w-full h-10 mt-3 px-3" />
-        </div>
-      ) : (
-        <section className="p-3">
-          <h1 className="font-bold text-2xl mb-1 uppercase">{content.title}</h1>
-          <p className="text-balance text-muted-foreground">
-            {" "}
-            {content.description}
-          </p>
-        </section>
-      )}
-      <hr />
+      <div className="w-full h-[250px] relative">
+        <img
+          src={content?.selected_images?.front.display.in}
+          alt="banner"
+          className="object-cover w-full h-full"
+        />
+      </div>
       <section className="p-3">
-        {/* <h1 className="font-bold text-2xl mb-1">Nutrition Value</h1> */}
-        {loading ? (
-          <NutritionTitleSkeleton />
-        ) : (
-          <p className="text-muted-foreground">
-            Here s a detailed look at the nutrients in {content.title} :
-          </p>
-        )}
-        {loading ? (
-          <NutritionSkeleton />
-        ) : (
-          <div className="inline-flex justify-between w-full mt-5">
-            <div>
-              <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
-                <div className="bg-[#8DAE4A] h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl" />
-                <div className="text-lg">{content.nutrition?.carbo}</div>
-              </div>
-              <div className="text-center mt-2">Carbo</div>
-            </div>
-            <div>
-              <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
-                <div className="bg-[#F4C61D] h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl" />
-                <div className="text-lg">{content.nutrition?.protein}</div>
-              </div>
-              <div className="text-center mt-2">Protein</div>
-            </div>
-            <div>
-              <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
-                <div className="bg-[#E8505B] h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl" />
-                <div className="text-lg">{content.nutrition?.sugar}</div>
-              </div>
-              <div className="text-center mt-2">Sugar</div>
-            </div>
-            <div>
-              <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
-                <div className="bg-[#F2F2F2] h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl" />
-                <div className="text-lg">{content.nutrition?.fat}</div>
-              </div>
-              <div className="text-center mt-2">Fat</div>
-            </div>
-            <div>
-              <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
-                <div className="bg-[#FB8827] h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl" />
-                <div className="text-lg">{content.nutrition?.salt}</div>
-              </div>
-              <div className="text-center mt-2">Salt</div>
-            </div>
-          </div>
-        )}
+        <h1 className="font-bold mb-2 text-2xl">
+          {content.product_name_in} - {content.quantity}
+        </h1>
+        <div className="inline-flex flex-wrap gap-1 mb-1">
+          {content?.categories?.split(",").map((value, index) => {
+            return (
+              <Badge key={index} variant="secondary">
+                {value}
+              </Badge>
+            );
+          })}
+        </div>
+        <Alert className="mt-2">
+          <AlertDescription className="lowercase">
+            {content.ingredients_text_in}
+          </AlertDescription>
+        </Alert>
       </section>
       <hr />
-      <section className="p-3 pb-20">
-        {loading ? (
-          <Skeleton className="w-full h-5" />
-        ) : (
-          <p className="text-muted-foreground">
-            The sweetness of {content.title}, certified with a food grade of{" "}
-            <span className="font-bold">{content.sugar?.grade}</span> . This
-            product contains {content.nutrition?.sugar} grams of sugar per
-            serving.
-          </p>
-        )}
-        <div className="grid grid-cols-5 mt-2">
-          {SugarGrade(content.sugar?.grade ?? "A", loading)}
+      <section className="p-3">
+        <p className="text-sm [&_p]:leading-relaxed">
+          Berikut adalah rincian nutrisi per sajian :
+        </p>
+        <div className="inline-flex gap-1 justify-between w-full mt-2">
+          {Object.entries({
+            sugars: content?.nutriscore_data?.sugars,
+            proteins: content?.nutriscore_data?.proteins,
+            sodium: content?.nutriscore_data?.sodium,
+            energy: content?.nutriscore_data?.energy,
+            fiber: content?.nutriscore_data?.fiber,
+          }).map(([key, value]) => {
+            const colors = [
+              "#F4C61D",
+              "#FF6347",
+              "#4682B4",
+              "#32CD32",
+              "#FF69B4",
+            ];
+
+            const randomColor =
+              colors[Math.floor(Math.random() * colors.length)];
+
+            return (
+              <div key={key}>
+                <div className="border w-18 h-18 flex flex-col items-center justify-center rounded-xl relative">
+                  <div
+                    className="h-5 w-5 absolute top-0 left-0 rounded-tl-xl rounded-br-xl"
+                    style={{ backgroundColor: randomColor }}
+                  />
+                  <div className="text-lg">{value}g</div>
+                </div>
+                <div className="text-center mt-2">
+                  {key.charAt(0).toUpperCase() + key.slice(1)}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <ul className="list-disc list-inside mt-2 text-muted-foreground">
-          {loading ? (
-            <div className="space-y-2 mt-4">
-              <Skeleton className="w-full h-5" />
-              <Skeleton className="w-full h-5" />
-              <Skeleton className="w-full h-5" />
-              <Skeleton className="w-full h-5" />
-              <Skeleton className="w-full h-5" />
-            </div>
-          ) : (
-            <>
-              <li>A: Less than 1g of sugar per serving.</li>
-              <li>B: 1-2.4g of sugar per serving.</li>
-              <li>C: 2.5-4g of sugar per serving.</li>
-              <li>D: 4.1-6g of sugar per serving.</li>
-              <li>E: More than 6g of sugar per serving.</li>
-            </>
-          )}
-        </ul>
+      </section>
+      <hr />
+      <section className="p-3">
+        <p className="text-sm [&_p]:leading-relaxed">
+          Ini adalah skor untuk mengukur kadar gula pada produk{" "}
+          <span className="font-bold text-md">{content.product_name_in} </span>.
+          Produk ini memiliki nilai kadar gula{" "}
+          <span className="font-bold text-md">
+            {content.nutriscore_grade?.toUpperCase()}
+          </span>
+          . Setiap porsi mengandung{" "}
+          <span className="font-semibold">
+            {content.nutriscore_data?.sugars}
+          </span>{" "}
+          gram gula.
+        </p>
+        <div className="grid grid-cols-5 mt-2 border p-2 rounded-lg">
+          <SugarGrade grade={content?.nutriscore_grade?.toUpperCase() || "A"} />
+        </div>
+      </section>
+      <hr />
+      <section className="px-3 pb-20 text-sm lowercase [&_p]:leading-relaxed">
+        <Alert className="mt-2">
+          <AlertTitle className="text-lg capitalize font-bold">
+            Ringkasan
+          </AlertTitle>
+          <AlertDescription className="lowercase">
+            <ReactMarkdown>{summary}</ReactMarkdown>
+          </AlertDescription>
+        </Alert>
       </section>
       <div className="bottom-0 p-5 w-full fixed left-0 max-w-[480px] mx-auto inset-x-0 bg-white">
         <Sheet>
           <SheetTrigger className="w-full bg-black p-2 rounded-lg text-white">
-            Open
+            Tanya seputar produk {content.product_name_in}
           </SheetTrigger>
           <SheetContent
             className="w-[480px] mx-auto h-full rounded-t-lg"
@@ -310,20 +355,20 @@ export default function Detail() {
                       className="flex items-start justify-end gap-2.5"
                       key={index}
                     >
-                      {/* Insert dot here */}
                       <div className="flex flex-col gap-1 w-full max-w-[320px]">
                         <div className="flex items-center justify-end space-x-2 rtl:space-x-reverse">
                           <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
-                            {/* 11:46 */}
+                            {/* Timestamp */}
                           </span>
                           <span className="text-sm font-semibold text-gray-900 dark:text-white">
                             You
                           </span>
                         </div>
                         <div className="flex flex-col leading-1.5 p-4 border-gray-200 bg-gray-100 rounded-e-xl rounded-es-xl dark:bg-gray-700">
-                          <p className="text-sm font-normal text-gray-900 dark:text-white">
+                          {/* Use ReactMarkdown to render markdown */}
+                          <ReactMarkdown className="text-sm  [&_p]:leading-relaxed font-normal text-gray-900 dark:text-white">
                             {chat.content}
-                          </p>
+                          </ReactMarkdown>
                         </div>
                         <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
                           {/* Delivered */}
@@ -333,36 +378,55 @@ export default function Detail() {
                     </div>
                   );
                 }
+
                 return (
                   <div key={index} className="flex items-start gap-2.5">
                     <img
                       className="w-8 h-8 rounded-full bg-black"
                       src="https://logowik.com/content/uploads/images/ollama-language-model9633.logowik.com.webp"
+                      alt="Ollama avatar"
                     />
                     <div className="flex flex-col gap-1 w-full max-w-[320px]">
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
                         <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                          Ollama (your nutritionis)
+                          Nutribot
                         </span>
                         <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
-                          {/* 11:46 */}
+                          {/* Timestamp */}
                         </span>
                       </div>
                       <div className="flex flex-col leading-1.5 p-4 border-gray-200 bg-gray-100 rounded-e-xl rounded-es-xl dark:bg-gray-700">
-                        <p className="text-sm font-normal text-gray-900 dark:text-white">
+                        {/* Use ReactMarkdown to render markdown */}
+                        <ReactMarkdown className="text-sm font-normal  [&_p]:leading-relaxed text-gray-900 dark:text-white">
                           {chat.content}
-                        </p>
+                        </ReactMarkdown>
                       </div>
                       <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
                         {/* Delivered */}
                       </span>
                     </div>
-                    {/* Insert dot here */}
                   </div>
                 );
               })}
             </div>
             <div className="bg-white bottom-0 absolute w-full inset-x-0 mx-auto p-4">
+              {messages.length > 0 ? null : (
+                <div className="mb-4 flex flex-col gap-2 w-full">
+                  {defaultMessages.map((value, index) => {
+                    return (
+                      <button
+                        key={index}
+                        onClick={() => {
+                          onSubmit({ messages: value });
+                        }}
+                        className="w-full p-2 hover:bg-gray-100 [&_p]:leading-relaxed text-sm rounded-lg border border-gray-500 flex flex-col justify-center items-center cursor-pointer"
+                      >
+                        {value}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="">
                   <FormField
@@ -373,7 +437,7 @@ export default function Detail() {
                         <FormControl>
                           <div className="relative">
                             <Input
-                              placeholder="input your message here."
+                              placeholder="Tanyakan apa saja seputar produk ini"
                               className="p-2 px-4"
                               {...field}
                               onKeyDown={(e) => {

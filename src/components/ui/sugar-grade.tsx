@@ -1,22 +1,20 @@
-import { ISugarGrade } from "@/interface/response";
 import { cn } from "@/lib/utils";
-import { Skeleton } from "./skeleton";
+import React from "react";
 
-const SugarGrade = (grade: ISugarGrade, loading: boolean) => {
-  return ["A", "B", "C", "D", "0"].map((item, index) => {
-    if (loading) {
-      return <Skeleton key={index} className="w-full h-[90px]" />;
-    }
+const SugarGrade: React.FC<{
+  grade: string;
+}> = ({ grade }) => {
+  return ["A", "B", "C", "D", "E"].map((item, index) => {
     return (
       <div
         key={index}
         className={cn(
           "w-full h-[90px] text-5xl font-bold text-white flex flex-col items-center justify-center relative",
-          item === "A" && "bg-[#045624]",
+          item === "A" && "bg-[#045624] rounded-l-lg",
           item === "B" && "bg-[#81B724]",
           item === "C" && "bg-[#F0A330]",
           item === "D" && "bg-[#B61918]",
-          item === "0" && "bg-[#EEEEEE]"
+          item === "E" && "bg-[#6e0c0c] rounded-r-lg"
         )}
       >
         {item === grade ? (
@@ -28,21 +26,4 @@ const SugarGrade = (grade: ISugarGrade, loading: boolean) => {
   });
 };
 
-const SugarGradeHeaderBadge = (grade: ISugarGrade) => {
-  return (
-    <div
-      className={cn(
-        "w-[50px] h-[50px] font-bold flex text-3xl rounded-lg drop-shadow-lg shadow-lg flex-col items-center justify-center relative",
-        grade === "A" && "bg-[#045624]  text-white",
-        grade === "B" && "bg-[#81B724]  text-white",
-        grade === "C" && "bg-[#F0A330]  text-white",
-        grade === "D" && "bg-[#B61918]  text-white",
-        grade === "0" && "bg-[#EEEEEE] text-black"
-      )}
-    >
-      {grade}
-    </div>
-  );
-};
-
-export { SugarGrade, SugarGradeHeaderBadge };
+export { SugarGrade };

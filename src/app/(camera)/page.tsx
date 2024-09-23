@@ -1,17 +1,23 @@
 "use client";
-import { Header } from "@/components/ui/header";
 import { Main } from "@/components/ui/page-wrapper";
 import { IDetectedBarcode, Scanner } from "@yudiel/react-qr-scanner";
-import { useEffect } from "react";
-
+import { useRouter } from "next/navigation";
 export default function Home() {
-  const handleOnScan = (result: IDetectedBarcode) => {
-    console.log(result);
+  const router = useRouter();
+
+  const handleOnScan = async (result: IDetectedBarcode[]) => {
+    const { rawValue: barcode } = result[0];
+    router.push(`/detail?barcode=${barcode}`);
   };
+
   return (
-    <Main>
+    <Main className="flex flex-col items-center relative justify-center bg-black">
+      <div className=" h-[400px] z-40 bg-gradient-to-b from-black via-black to-transparent fr w-full absolute top-0"></div>
+      <div className=" h-[400px] z-40 bg-gradient-to-t from-black via-black to-transparent fr w-full absolute bottom-0"></div>
+      <h1 className="text-white z-50 font-bold text-3xl absolute top-28 font-mono">
+        Nutriscan
+      </h1>
       <Scanner
-        classNames={{}}
         scanDelay={100}
         styles={{
           container: {
@@ -49,8 +55,7 @@ export default function Home() {
           "upc_a",
           "upc_e",
         ]}
-        onError={(result) => console.log(result)}
-        onScan={(result) => console.log(result)}
+        onScan={(result) => handleOnScan(result)}
       />
     </Main>
   );
